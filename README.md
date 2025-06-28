@@ -1,53 +1,87 @@
-# CloudWatch to Slack Alerts Terraform Module
+# CloudWatch to PagerDuty Alerts Terraform Module
 
-This Terraform module sets up CloudWatch alarms that send notifications to Slack through a Lambda function.
+A Terraform module for creating CloudWatch alarms that send notifications to PagerDuty through SNS integration.
 
 ## Features
 
 - Creates CloudWatch alarms from JSON configuration
+- Supports RDS, CloudWatch, and Log Metric Filter alarms
 - Sets up SNS topic for alarm notifications
-- Creates Lambda function to forward alerts to Slack
+- Integrates with PagerDuty via HTTPS endpoint
 - Configures necessary IAM roles and permissions
 - Supports multiple environments
 - Includes proper tagging
 
-## Prerequisites
+## Requirements
 
-- AWS account with appropriate permissions
-- Terraform >= 0.13
-- Slack webhook URL
-- Python 3.9 runtime support in AWS Lambda
+| Name | Version |
+|------|---------|
+| terraform | >= 1.0 |
+| aws | >= 4.0 |
 
 ## Usage
 
 1. Create your `alarms.json` file with your desired alarms configuration:
 
 ```json
-[
-  {
-    "name": "HighCPU",
-    "metric": "CPUUtilization",
-    "threshold": 80,
-    "comparison_operator": "GreaterThanThreshold",
-    "period": 300,
-    "evaluation_periods": 1,
-    "namespace": "AWS/EC2",
-    "statistic": "Average",
-    "dimensions": {
-      "InstanceId": "i-0123456789abcdef0"
+{
+  "rds_alarms": [
+    {
+      "name": "HighCPU",
+      "description": "RDS CPU utilization is high",
+      "metric_name": "CPUUtilization",
+      "namespace": "AWS/RDS",
+      "statistic": "Average",
+      "period": 300,
+      "evaluation_periods": 2,
+      "threshold": 80,
+      "comparison_operator": "GreaterThanThreshold",
+      "dimensions": {
+        "DBInstanceIdentifier": "my-database"
+      }
     }
-  }
-]
+  ],
+  "cloudwatch_alarms": [
+    {
+      "name": "HighMemory",
+      "description": "EC2 memory utilization is high",
+      "metric_name": "MemoryUtilization",
+      "namespace": "AWS/EC2",
+      "statistic": "Average",
+      "period": 300,
+      "evaluation_periods": 2,
+      "threshold": 85,
+      "comparison_operator": "GreaterThanThreshold",
+      "dimensions": {
+        "InstanceId": "i-0123456789abcdef0"
+      }
+    }
+  ],
+  "log_metric_filters": [
+    {
+      "log_group_name": "/aws/lambda/my-function",
+      "filters": [
+        {
+          "metric_name": "ErrorCount",
+          "namespace": "MyApp/Logs",
+          "pattern": "ERROR",
+          "description": "Error count in application logs"
+        }
+      ]
+    }
+  ]
+}
 ```
 
 2. Create a Terraform configuration file:
 
 ```hcl
-module "cloudwatch_alerts" {
-  source = "path/to/module"
+module "cloudwatch_pagerduty_alerts" {
+  source = "Senora-dev/cw-alarms-to-pagerduty/aws"
 
-  environment      = "prod"
-  slack_webhook_url = "https://hooks.slack.com/services/XXX/YYY/ZZZ"
+  environment              = "prod"
+  alarms_config_path       = "./alarms.json"
+  pagerduty_integration_url = "https://events.pagerduty.com/v2/enqueue/service/XXXXX"
   
   tags = {
     Project     = "MyProject"
@@ -56,78 +90,47 @@ module "cloudwatch_alerts" {
 }
 ```
 
-## Variables
+## Inputs
 
-| Name | Description | Type | Required |
-|------|-------------|------|----------|
-| environment | Environment name (e.g., dev, staging, prod) | string | yes |
-| slack_webhook_url | Slack webhook URL for sending notifications | string | yes |
-| tags | A map of tags to add to all resources | map(string) | no |
+| Name | Description | Type | Default | Required |
+|------|-------------|------|---------|:--------:|
+| environment | Environment name (e.g., dev, staging, prod) | `string` | n/a | yes |
+| alarms_config_path | Path to the alarms configuration JSON file | `string` | n/a | yes |
+| pagerduty_integration_url | The PagerDuty integration URL for CloudWatch alarms | `string` | n/a | yes |
+| tags | A map of tags to add to all resources | `map(string)` | `{}` | no |
+| log_anomalies | Configuration for log anomaly detection | `object` | See below | no |
+
+### log_anomalies Object
+
+```hcl
+{
+  enabled = bool
+  log_groups = list(object({
+    name = string
+    patterns = list(string)
+    slack_channel = string
+  }))
+  evaluation_periods = number
+  period = number
+  threshold = number
+}
+```
 
 ## Outputs
 
 | Name | Description |
 |------|-------------|
-| sns_topic_arn | ARN of the SNS topic |
-| lambda_function_arn | ARN of the Lambda function |
-| lambda_function_name | Name of the Lambda function |
-| cloudwatch_alarms | Map of CloudWatch alarms created |
+| sns_topic_arn | The ARN of the SNS topic used for CloudWatch alarms |
+| cloudwatch_alarms | Map of CloudWatch alarm names to their ARNs |
 
-## Alarm Configuration
+## Examples
 
-The `alarms.json` file supports the following fields for each alarm:
-
-- `name`: Alarm name
-- `metric`: CloudWatch metric name
-- `threshold`: Threshold value
-- `comparison_operator`: Comparison operator
-- `period`: Period in seconds
-- `evaluation_periods`: Number of periods to evaluate
-- `namespace`: CloudWatch namespace
-- `statistic`: Statistic type
-- `dimensions`: Metric dimensions
-
-## Slack Notifications
-
-The Lambda function sends formatted messages to Slack with:
-
-- Alarm name and status
-- Region information
-- Detailed reason for the alarm
-- Color-coded status (red for ALARM, green for OK)
-- Timestamp of the event
-
-## Installation
-
-1. Copy this module to your Terraform project
-2. Configure your `alarms.json`
-3. Create your Terraform configuration
-4. Run:
-   ```bash
-   terraform init
-   terraform plan
-   terraform apply
-   ```
-
-## Testing
-
-To test the setup:
-
-1. Deploy the module
-2. Manually trigger a test alarm
-3. Verify the notification appears in your Slack channel
-
-## Notes
-
-- Ensure your AWS credentials have the necessary permissions
-- The Lambda function uses Python 3.9 runtime
-- All resources are tagged with environment and name
-- SNS topic and Lambda function names include the environment prefix
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
+- [Basic Example](examples/basic) - Minimal usage with RDS and CloudWatch alarms.
 
 ## License
 
-This module is released under the MIT License. 
+MIT Licensed. See [LICENSE](LICENSE) for full details.
+
+## Maintainers
+
+This module is maintained by [Senora.dev](https://senora.dev). 
